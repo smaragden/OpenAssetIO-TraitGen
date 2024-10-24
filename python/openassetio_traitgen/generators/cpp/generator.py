@@ -29,17 +29,16 @@ from typing import List, Callable, Union
 
 import jinja2
 
-from . import helpers, cpp_keywords
-from ..datamodel import (
+from .. import helpers
+from . import cpp_keywords
+from ...datamodel import (
     PackageDeclaration,
     PropertyType,
     NamespaceDeclaration,
     SpecificationDeclaration,
     TraitDeclaration,
 )
-
-
-__all__ = ["generate"]
+from .. import TraitGenerator
 
 #
 ## Code Generation
@@ -48,22 +47,28 @@ __all__ = ["generate"]
 OPENASSETIO_ABI_VERSION = "v1"
 TRAITGEN_ABI_VERSION = "v1"
 
-
-# pylint: disable=too-many-locals
-def generate(
-    package_declaration: PackageDeclaration,
-    globals_: dict,
-    output_directory: str,
-    creation_callback,
-    logger: logging.Logger,
-):
+class CppTraitGenerator(TraitGenerator):
     """
-    Generates a C++ package for the supplied definition under
-    output_directory.
+    A traitgen generator that outputs a C++ package based on the
+    openassetio_traitgen PackageDefinition model.
     """
-    env = _create_jinja_env(globals_, logger)
 
-    Renderer(env, package_declaration, creation_callback).render_package(output_directory)
+    # pylint: disable=too-many-locals
+    def generate(
+            self,
+        package_declaration: PackageDeclaration,
+        globals_: dict,
+        output_directory: str,
+        creation_callback,
+        logger: logging.Logger,
+    ):
+        """
+        Generates a C++ package for the supplied definition under
+        output_directory.
+        """
+        env = _create_jinja_env(globals_, logger)
+
+        Renderer(env, package_declaration, creation_callback).render_package(output_directory)
 
 
 class Renderer:
@@ -280,7 +285,7 @@ class Renderer:
         # pylint: disable=line-too-long
         # NB: Jinja assumes '/' on all plaftorms:
         #  https://github.com/pallets/jinja/blob/7fb13bf94443f067c74204a1aee368fdf0591764/src/jinja2/loaders.py#L29
-        template = self.__env.get_template(f"cpp/{name}.hpp.in")
+        template = self.__env.get_template(f"{name}.hpp.in")
         with open(path, "w", encoding="utf-8", newline="\n") as file:
             file.write(template.render(variables))
         self.__creation_callback(path)
@@ -305,12 +310,12 @@ class Renderer:
 def _create_jinja_env(env_globals, logger):
     """
     Creates a custom Jinja2 environment with:
-     - A package a loader that automatically finds templates within a
-       'templates' directory in the openassetio_traitgen python package.
-     - Updated globals.
-     - Custom filters.
+    - A package a loader that automatically finds templates within a
+    'templates' directory in the openassetio_traitgen python package.
+    - Updated globals.
+    - Custom filters.
     """
-    env = jinja2.Environment(loader=jinja2.PackageLoader("openassetio_traitgen"))
+    env = jinja2.Environment(loader=jinja2.PackageLoader("openassetio_traitgen", "generators/cpp/templates"))
     env.globals.update(env_globals)
     _install_custom_filters(env, logger)
     return env

@@ -59,9 +59,56 @@ Each generator has a single entry point as shown below:
   - logger: A logger to use for any user-facing messaging or
       diagnostic reporting.
 """
-from . import helpers
-from . import python
-from . import cpp
+import logging
+import abc
+from importlib.metadata import entry_points
+from .. import datamodel
+
+class TraitGenerator(abc.ABC):
+    """
+    Base class for all generators.
+    """
+    @abc.abstractmethod
+    def generate(
+        self,
+        package_declaration: datamodel.PackageDeclaration,
+        globals_: dict,
+        output_directory: str,
+        creation_callback,
+        logger: logging.Logger,
+    ):
+        """
+        Generate code for the given package declaration.
+        """
+        ...
+
+
+def builtin_plugins():
+    """
+    Returns a list of all known generators.
+    """
+    from .python import PythonTraitGenerator
+    from .cpp import CppTraitGenerator
+    return {
+        "python": PythonTraitGenerator,
+        "cpp": CppTraitGenerator
+    }
+
+
+def discover_generators():
+    generators = builtin_plugins()
+    seen = set(generators.keys())
+    discovered_generators = entry_points(group='openassetio-traitgen.generators')
+    print("Discovered:", discovered_generators)
+    for entry_point in discovered_generators:
+        if entry_point.name in seen:
+            raise ValueError(f"Duplicate generator name: {entry_point.name}")
+        seen.add(entry_point.name)
+        print("Loading:", entry_point)
+        generators[entry_point.name] = entry_point.load()
+
+    print("Generators:", generators)
+    return generators
 
 # All known language generators
-ALL = ("python", "cpp")
+ALL = discover_generators()

@@ -141,8 +141,8 @@ def generate(
     # Retrieve the generator by looking up an attribute with the
     # requested name and generate.
     try:
-        generator_obj = getattr(generators, generator)
-    except AttributeError as exc:
+        generator_obj = generators.ALL[generator]()
+    except KeyError as exc:
         # Make the error message a bit friendlier.
         raise ValueError(f"Could not find generator {generator}") from exc
 

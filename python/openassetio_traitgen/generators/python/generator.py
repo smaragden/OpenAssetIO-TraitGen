@@ -27,130 +27,127 @@ from typing import List
 
 import jinja2
 
-from . import helpers
-from ..datamodel import PackageDeclaration, PropertyType
+from .. import helpers
+from ...datamodel import PackageDeclaration, PropertyType
+from .. import TraitGenerator
 
-
-__all__ = ["generate"]
-
-
-#
-## Code Generation
-#
-
-
-# pylint: disable=too-many-locals
-def generate(
-    package_declaration: PackageDeclaration,
-    globals_: dict,
-    output_directory: str,
-    creation_callback,
-    logger: logging.Logger,
-):
+class PythonTraitGenerator(TraitGenerator):
     """
-    Generates a python package for the supplied definition under outputDirPath.
+    A traitgen generator that outputs a python package based on the
+    openassetio_traitgen PackageDefinition model.
     """
 
-    env = _create_jinja_env(globals_, logger)
-
-    def render_template(name: str, path: str, variables: dict):
+    # pylint: disable=too-many-locals
+    def generate(
+        self,
+        package_declaration: PackageDeclaration,
+        globals_: dict,
+        output_directory: str,
+        creation_callback,
+        logger: logging.Logger,
+    ):
         """
-        A convenience to render a named template into its corresponding
-        file and call the creationCallback.
+        Generates a python package for the supplied definition under outputDirPath.
         """
-        # pylint: disable=line-too-long
-        # NB: Jinja assumes '/' on all plaftorms:
-        #  https://github.com/pallets/jinja/blob/7fb13bf94443f067c74204a1aee368fdf0591764/src/jinja2/loaders.py#L29
-        template = env.get_template(f"python/{name}.py.in")
-        with open(path, "w", encoding="utf-8", newline="\n") as file:
-            file.write(template.render(variables))
-        creation_callback(path)
 
-    def create_dir_with_path_components(*args) -> str:
-        """
-        A convenience to create a directory from the supplied path
-        components, calling the creationCallback and returning its path
-        as a string.
-        """
-        path = os.path.join(*args)
-        os.makedirs(path, exist_ok=True)
-        creation_callback(path)
-        return path
+        env = _create_jinja_env(globals_, logger)
 
-    # Top level package directory, under a "python" subdirectory
-    package_name = env.filters["to_py_module_name"](package_declaration.id)
-    package_dir_path = create_dir_with_path_components(output_directory, package_name)
+        def render_template(name: str, path: str, variables: dict):
+            """
+            A convenience to render a named template into its corresponding
+            file and call the creationCallback.
+            """
+            # pylint: disable=line-too-long
+            # NB: Jinja assumes '/' on all plaftorms:
+            #  https://github.com/pallets/jinja/blob/7fb13bf94443f067c74204a1aee368fdf0591764/src/jinja2/loaders.py#L29
+            template = env.get_template(f"{name}.py.in")
+            with open(path, "w", encoding="utf-8", newline="\n") as file:
+                file.write(template.render(variables))
+            creation_callback(path)
 
-    # Collect which sub-packages we should import at the top level, so
-    # they're available without a 'from x import y' statement.
-    package_init_imports = []
+        def create_dir_with_path_components(*args) -> str:
+            """
+            A convenience to create a directory from the supplied path
+            components, calling the creationCallback and returning its path
+            as a string.
+            """
+            path = os.path.join(*args)
+            os.makedirs(path, exist_ok=True)
+            creation_callback(path)
+            return path
 
-    # Sub-packages for traits and specifications
-    for kind in ("traits", "specifications"):
-        namespaces = getattr(package_declaration, kind, None)
-        if namespaces:
-            package_init_imports.append(kind)
+        # Top level package directory, under a "python" subdirectory
+        package_name = env.filters["to_py_module_name"](package_declaration.id)
+        package_dir_path = create_dir_with_path_components(output_directory, package_name)
 
-            # Create the directory for the sub-package
-            subpackage_dir_path = create_dir_with_path_components(package_dir_path, kind)
+        # Collect which sub-packages we should import at the top level, so
+        # they're available without a 'from x import y' statement.
+        package_init_imports = []
 
-            # Collect the resulting module names for each namespace
-            # So we can pre-import them in the sub-package init.
-            subpackage_init_imports = []
+        # Sub-packages for traits and specifications
+        for kind in ("traits", "specifications"):
+            namespaces = getattr(package_declaration, kind, None)
+            if namespaces:
+                package_init_imports.append(kind)
 
-            # Generate a single-file module for each namespace
-            for namespace in namespaces:
-                safe_namespace = env.filters["to_py_module_name"](namespace.id)
-                subpackage_init_imports.append(safe_namespace)
+                # Create the directory for the sub-package
+                subpackage_dir_path = create_dir_with_path_components(package_dir_path, kind)
+
+                # Collect the resulting module names for each namespace
+                # So we can pre-import them in the sub-package init.
+                subpackage_init_imports = []
+
+                # Generate a single-file module for each namespace
+                for namespace in namespaces:
+                    safe_namespace = env.filters["to_py_module_name"](namespace.id)
+                    subpackage_init_imports.append(safe_namespace)
+                    render_template(
+                        kind,
+                        os.path.join(subpackage_dir_path, f"{safe_namespace}.py"),
+                        {
+                            "package": package_declaration,
+                            "namespace": namespace,
+                            "imports": helpers.package_dependencies(namespace.members),
+                        },
+                    )
+
+                # Generate the sub-package __init__.py that pre-imports all
+                # of the sub-modules.
+                subpackage_init_imports.sort()
+                docstring = f"{kind.capitalize()} defined in the '{package_declaration.id}' package."
                 render_template(
-                    kind,
-                    os.path.join(subpackage_dir_path, f"{safe_namespace}.py"),
-                    {
-                        "package": package_declaration,
-                        "namespace": namespace,
-                        "imports": helpers.package_dependencies(namespace.members),
-                    },
+                    "__init__",
+                    os.path.join(subpackage_dir_path, "__init__.py"),
+                    {"docstring": docstring, "relImports": subpackage_init_imports},
                 )
 
-            # Generate the sub-package __init__.py that pre-imports all
-            # of the sub-modules.
-            subpackage_init_imports.sort()
-            docstring = f"{kind.capitalize()} defined in the '{package_declaration.id}' package."
-            render_template(
-                "__init__",
-                os.path.join(subpackage_dir_path, "__init__.py"),
-                {"docstring": docstring, "relImports": subpackage_init_imports},
-            )
-
-    # Package __init__.py
-    render_template(
-        "__init__",
-        os.path.join(package_dir_path, "__init__.py"),
-        {"docstring": package_declaration.description, "relImports": package_init_imports},
-    )
+        # Package __init__.py
+        render_template(
+            "__init__",
+            os.path.join(package_dir_path, "__init__.py"),
+            {"docstring": package_declaration.description, "relImports": package_init_imports},
+        )
 
 
 #
 ## Jinja setup
 #
 
-
 def _create_jinja_env(env_globals, logger):
     """
     Creates a custom Jinja2 environment with:
-     - A package a loader that automatically finds templates within a
-       'templates' directory in the openassetio_traitgen python package.
-     - Updated globals.
-     - Custom filters.
+    - A package a loader that automatically finds templates within a
+    'templates' directory in the openassetio_traitgen python package.
+    - Updated globals.
+    - Custom filters.
     """
-    env = jinja2.Environment(loader=jinja2.PackageLoader("openassetio_traitgen"))
+    env = jinja2.Environment(loader=jinja2.PackageLoader("openassetio_traitgen", "generators/python/templates"))
     env.globals.update(env_globals)
     _install_custom_filters(env, logger)
     return env
 
 
 # Custom filters
-
 
 def _install_custom_filters(environment, logger):
     """
